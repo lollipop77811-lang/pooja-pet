@@ -7,12 +7,246 @@ generator client {
   provider = "prisma-client-js"
 }
 
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+}
+
+enum BusinessType {
+  CLOUD_KITCHEN
+  RESTAURANT
+  HYBRID
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum OtpPurpose {
+  SIGNUP
+  LOGIN
+}
+
+// 1. tenant: name, status (TRIAL|ACTIVE|SUSPENDED), plan_id, trial_ends_at, onboarding (Json, default {})
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  status        TenantStatus   @default(TRIAL)
+  planId        String?        @map("plan_id") @db.Uuid
+  trialEndsAt   DateTime?      @map("trial_ends_at")
+  onboarding    Json           @default("{}")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  plan          Plan?          @relation(fields: [planId], references: [id], onDelete: SetNull)
+  outlets       Outlet[]
+  users         AppUser[]
+  roles         Role[]
+  userOutlets   UserOutlet[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+
+  @@map("tenant")
+}
+
+// 2. plan (global, not tenant-owned): code, name, max_outlets, max_users, modules (Json), price_monthly_paise (int)
+model Plan {
+  id                String   @id @default(uuid()) @db.Uuid
+  code              String   @unique
+  name              String
+  maxOutlets        Int      @map("max_outlets")
+  maxUsers          Int      @map("max_users")
+  modules           Json     @default("[]")
+  priceMonthlyPaise Int      @map("price_monthly_paise")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  tenants           Tenant[]
+
+  @@map("plan")
+}
+
+// 3. outlet: tenant_id, name, code (globally unique 6-char), business_type (CLOUD_KITCHEN|RESTAURANT|HYBRID), modules (Json feature flags), settings (Json), gstin (nullable), address, archived_at
+model Outlet {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  name         String
+  code         String       @unique @db.VarChar(6)
+  businessType BusinessType @map("business_type")
+  modules      Json         @default("{}")
+  settings     Json         @default("{}")
+  gstin        String?
+  address      String
+  archivedAt   DateTime?    @map("archived_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userOutlets  UserOutlet[]
+
+  @@index([tenantId])
+  @@map("outlet")
+}
+
+// 4. app_user: tenant_id, name, phone, email (nullable), username (unique per tenant), pin_hash (nullable), role_id, status (ACTIVE|DISABLED), last_login_at, archived_at
+model AppUser {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  name          String
+  phone         String
+  email         String?
+  username      String
+  pinHash       String?        @map("pin_hash")
+  roleId        String         @map("role_id") @db.Uuid
+  status        UserStatus     @default(ACTIVE)
+  lastLoginAt   DateTime?      @map("last_login_at")
+  archivedAt    DateTime?      @map("archived_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role          Role           @relation(fields: [roleId], references: [id])
+  userOutlets   UserOutlet[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+
+  @@unique([tenantId, username])
+  @@index([tenantId])
+  @@map("app_user")
+}
+
+// 5. role: tenant_id (nullable; null = system role), name, is_system
+model Role {
+  id              String           @id @default(uuid()) @db.Uuid
+  tenantId        String?          @map("tenant_id") @db.Uuid
+  name            String
+  isSystem        Boolean          @default(false) @map("is_system")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users           AppUser[]
+  rolePermissions RolePermission[]
+
+  @@index([tenantId])
+  @@map("role")
+}
+
+// 6. permission (global): code (unique), description
+model Permission {
+  id              String           @id @default(uuid()) @db.Uuid
+  code            String           @unique
+  description     String
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("permission")
+}
+
+// 7. role_permission: role_id, permission_id
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+// 8. user_outlet: user_id, outlet_id, tenant_id
+model UserOutlet {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  outletId  String   @map("outlet_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("tenants")
+  user      AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outlet    Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, outletId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([outletId])
+  @@map("user_outlet")
+}
+
+// 9. audit_log: tenant_id (nullable), user_id (nullable), action, entity_type, entity_id, metadata (Json), ip, created_at
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String?  @map("tenant_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json     @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user       AppUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}
+
+// 10. otp_code (global): target, code_hash, purpose (SIGNUP|LOGIN), expires_at, attempts, consumed_at
+model OtpCode {
+  id         String     @id @default(uuid()) @db.Uuid
+  target     String
+  codeHash   String     @map("code_hash")
+  purpose    OtpPurpose
+  expiresAt  DateTime   @map("expires_at")
+  attempts   Int        @default(0)
+  consumedAt DateTime?  @map("consumed_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  @@index([target, purpose])
+  @@map("otp_code")
+}
+
+// 11. refresh_token: tenant_id, user_id, token_hash, expires_at, revoked_at
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("refresh_token")
+}
+
+// 12. super_admin (global): email (unique), password_hash
+model SuperAdmin {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("super_admin")
 }

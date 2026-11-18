@@ -7,14 +7,18 @@ async function main() {
 
   // Placeholder seed: creates an initial tenant to prove database flow works.
   // In Stages 1-2, this will be expanded with cloud kitchen / restaurant entities, menus, tables, and roles.
-  const tenant = await prisma.tenant.upsert({
-    where: { slug: 'sample-kitchen' },
-    update: {},
-    create: {
-      name: 'Sample Cloud Kitchen',
-      slug: 'sample-kitchen',
-    },
+  let tenant = await prisma.tenant.findFirst({
+    where: { name: 'Sample Cloud Kitchen' },
   });
+
+  if (!tenant) {
+    tenant = await prisma.tenant.create({
+      data: {
+        name: 'Sample Cloud Kitchen',
+        status: 'TRIAL',
+      },
+    });
+  }
 
   console.log(`✅ Seeded placeholder tenant: ${tenant.name} [ID: ${tenant.id}]`);
 }

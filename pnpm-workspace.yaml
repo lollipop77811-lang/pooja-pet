@@ -7,3 +7,10 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - 'esbuild'
+  - 'prisma'
+
